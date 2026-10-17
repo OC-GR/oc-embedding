@@ -1,0 +1,56 @@
+{
+  "project": "oc-embedding",
+  "upstream": {
+    "repository": "https://github.com/huggingface/text-embeddings-inference",
+    "commit": "e80ef225ed0e6cb1717ce632a6a84b6cf211bb67",
+    "tree": "9971db26d5b6cf8bd646a1e47b1c7973b60a664f",
+    "version": "1.9.4",
+    "license": "Apache-2.0",
+    "snapshot_file_count": 294
+  },
+  "created_at": "2026-10-17T15:29:41.322870+08:00",
+  "source_code_modified": false,
+  "cargo_manifests_and_lockfile_modified": false,
+  "original_dockerfiles_modified": false,
+  "project_changes": [
+    "New independent Git repository named oc-embedding",
+    "Project README replaces upstream front page; upstream README retained as README.upstream.md with introductory model examples edited for this project",
+    "Introductory model examples edited in README.upstream.md and docs/source/en/index.md; modification notices added and copyright and license notices preserved",
+    "Upstream GitHub workflows archived under .github/upstream-workflows",
+    "Two CPU Dockerfile copies preserve the successful Git CLI fetching adjustment",
+    "UPSTREAM.json records the exact source snapshot and provenance",
+    "Portable GitHub Actions restore file checks, Rust CPU builds, Clippy, selected upstream CPU tests and secret scanning",
+    "Native ARM64 and AMD64 Docker CI builds temporary images, validates real offline inference with synthetic weights and always deletes its containers and images"
+  ],
+  "builds": {
+    "arm64": {
+      "platform": "linux/arm64",
+      "upstream_dockerfile": "Dockerfile-arm64",
+      "build_dockerfile": "docker/Dockerfile.cpu-arm64",
+      "target": "http",
+      "image": "oc-embedding:1.9.4-arm64",
+      "dockerfile_sha256": "04b75dd68388acb7e07fe1c51ee301d638ebb2b7486de6b811875e9ee62da13e",
+      "difference_from_upstream": "Only ENV CARGO_NET_GIT_FETCH_WITH_CLI=true after WORKDIR /usr/src; matches the Dockerfile used in the successful build."
+    },
+    "amd64": {
+      "platform": "linux/amd64",
+      "upstream_dockerfile": "Dockerfile",
+      "build_dockerfile": "docker/Dockerfile.cpu-amd64",
+      "target": "http",
+      "image": "oc-embedding:1.9.4-amd64",
+      "dockerfile_sha256": "d199fb34c846af35f715b219e8b5ad37378a3badca7dae6acd4dc4c7ea6ca2d3",
+      "difference_from_upstream": "Only ENV CARGO_NET_GIT_FETCH_WITH_CLI=true after WORKDIR /usr/src; matches the Dockerfile used in the successful build."
+    }
+  },
+  "previous_validation": {
+    "source_commit": "e80ef225ed0e6cb1717ce632a6a84b6cf211bb67",
+    "model": "BAAI/bge-m3",
+    "model_commit": "5617a9f61b028005a4858fdac845db406aefb181",
+    "arm64": "PASS; native on Apple Silicon Mac",
+    "amd64": "PASS; emulated on Apple Silicon Mac",
+    "max_input_tokens": 2048,
+    "scope": "Sample-based dense embedding and retrieval parity against matching official TEI 1.9.4 images, before this repository was initialized.",
+    "models_and_validation_artifacts_copied": false,
+    "new_repository_image_rebuilt": false
+  }
+}

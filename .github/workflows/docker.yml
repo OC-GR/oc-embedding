@@ -1,0 +1,102 @@
+name: Docker CPU images
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test linux/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      IMAGE_TAG: oc-embedding:ci-${{ github.sha }}-${{ matrix.arch }}
+      CONTAINER_NAME: oc-embedding-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+      CI_MODEL_BASENAME: oc-embedding-ci-model-${{ matrix.arch }}
+      DOCKER_BUILD_SUMMARY: "false"
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Make room for the Rust and MKL build
+        # These SDKs are preinstalled on the disposable GitHub-hosted VM.
+        # The image build uses neither Android, .NET, nor Haskell.
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          cleanup: true
+
+      - name: Build the native CPU image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: docker/Dockerfile.cpu-${{ matrix.arch }}
+          target: http
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: ${{ env.IMAGE_TAG }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            DOCKER_LABEL=ci-${{ github.sha }}
+            SCCACHE_GHA_ENABLED=false
+          labels: |
+            org.opencontainers.image.title=oc-embedding
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Generate a small offline inference fixture
+        run: python3 scripts/ci/generate-model.py --output "$RUNNER_TEMP/$CI_MODEL_BASENAME"
+
+      - name: Check image metadata and run inference smoke tests
+        id: image-test
+        timeout-minutes: 10
+        # This checks the runtime with synthetic weights, not BGE-M3 quality.
+        run: |
+          python3 scripts/ci/test-image.py \
+            --image "$IMAGE_TAG" \
+            --model-dir "$RUNNER_TEMP/$CI_MODEL_BASENAME" \
+            --container-name "$CONTAINER_NAME" \
+            --expected-architecture "${{ matrix.arch }}" \
+            --expected-revision "$GITHUB_SHA"
+
+      - name: Delete the test container and image
+        if: always()
+        run: |
+          if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+            docker container rm --force "$CONTAINER_NAME"
+          fi
+          if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+            docker image rm --force "$IMAGE_TAG"
+          fi
+          remaining_container="$(docker container ls --all --quiet --filter "name=^/${CONTAINER_NAME}$")"
+          remaining_image="$(docker image ls --quiet "$IMAGE_TAG")"
+          test -z "$remaining_container"
+          test -z "$remaining_image"
+          printf '| Platform | Runtime tests | Test container and image |\n| --- | --- | --- |\n| linux/%s | %s | Deleted |\n' \
+            "${{ matrix.arch }}" "${{ steps.image-test.outcome }}" >> "$GITHUB_STEP_SUMMARY"
