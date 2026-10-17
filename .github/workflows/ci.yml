@@ -65,6 +65,9 @@ jobs:
         with:
           toolchain: 1.92.0
           components: clippy, rustfmt
+          # The project builds for target-cpu=native. Hosted x64 runners can
+          # have different CPUs, so compiled proc macros cannot be reused.
+          cache: false
           # Match the upstream pre-commit policy: Clippy warnings are reported;
           # compilation errors and Clippy errors fail the job.
           rustflags: ""
