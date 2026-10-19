@@ -1,4 +1,5 @@
 <!-- Modified for oc-embedding on 2026-10-17: introductory model examples updated. -->
+<!-- Modified for oc-embedding on 2026-10-19: upstream benchmark images and their references removed. -->
 
 <div align="center">
 
@@ -12,18 +13,6 @@
 </a>
 
 A blazing fast inference solution for text embeddings models.
-
-Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) on an NVIDIA A10 with a sequence
-length of 512 tokens:
-
-<p>
-  <img src="assets/bs1-lat.png" width="400" />
-  <img src="assets/bs1-tp.png" width="400" />
-</p>
-<p>
-  <img src="assets/bs32-lat.png" width="400" />
-  <img src="assets/bs32-tp.png" width="400" />
-</p>
 
 </div>
 

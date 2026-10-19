@@ -16,6 +16,7 @@
     "New independent Git repository named oc-embedding",
     "Project README replaces upstream front page; upstream README retained as README.upstream.md with introductory model examples edited for this project",
     "Introductory model examples edited in README.upstream.md and docs/source/en/index.md; modification notices added and copyright and license notices preserved",
+    "Removed four upstream benchmark image LFS pointers, their documentation references and the PNG LFS tracking rule",
     "Upstream GitHub workflows archived under .github/upstream-workflows",
     "Two CPU Dockerfile copies preserve the successful Git CLI fetching adjustment",
     "UPSTREAM.json records the exact source snapshot and provenance",
