@@ -79,6 +79,10 @@ fi
 "$oc_python_command" -m venv .venv
 oc_pip=(.venv/bin/python -m pip)
 
+# Python 3.10's bundled pip rejects normalized wheel metadata from the CPU
+# index. Bootstrap a fixed version before resolving the runtime dependencies.
+"${oc_pip[@]}" install --no-cache-dir --upgrade pip==25.3
+
 # CPU wheels exist for both amd64 and arm64. A version such as ==2.8.0 also
 # matches the upstream +cpu local-version wheels where that suffix is used.
 "${oc_pip[@]}" install --no-cache-dir --index-url "$oc_extra_url" \

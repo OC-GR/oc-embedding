@@ -47,7 +47,8 @@
     "Install locked runtime dependencies once; install the local package without dependencies and add test-only packages in an isolated test stage",
     "Offline Python and container checks use a locally generated real inference model; CI deletes temporary containers and images",
     "BGE-M3 preparation script adds explicit SentenceTransformers CLS pooling metadata without changing the original model directory",
-    "Preserve the exact upstream application file bytes across Git commits and checkouts with .gitattributes"
+    "Preserve the exact upstream application file bytes across Git commits and checkouts with .gitattributes",
+    "Bootstrap pip 25.3 in fresh virtual environments to support normalized CPU wheel metadata on Python 3.10"
   ],
   "model": {
     "name": "BAAI/bge-m3",
@@ -92,7 +93,8 @@
       "reference_image_installs": "transformers==4.49.0.dev0",
       "same_combination_retained": true,
       "validation_scope": "BGE-M3 dense text embeddings on Torch CPU; visual models are outside this validation"
-    }
+    },
+    "pip_bootstrap_version": "25.3"
   },
   "local_validation": {
     "date": "2026-11-16",
