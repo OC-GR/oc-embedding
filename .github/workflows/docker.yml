@@ -1,4 +1,4 @@
-name: Docker CPU images
+name: CPU images
 
 on:
   push:
@@ -9,14 +9,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: docker-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: Build and test linux/${{ matrix.arch }}
+  image:
+    name: Build and verify linux/${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -26,77 +26,59 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     env:
-      IMAGE_TAG: oc-embedding:ci-${{ github.sha }}-${{ matrix.arch }}
-      CONTAINER_NAME: oc-embedding-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
-      CI_MODEL_BASENAME: oc-embedding-ci-model-${{ matrix.arch }}
-      DOCKER_BUILD_SUMMARY: "false"
-      DOCKER_BUILD_RECORD_UPLOAD: "false"
+      IMAGE: oc-embedding-ci:${{ github.sha }}-${{ matrix.arch }}
+      BUILDER: oc-embedding-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+      CONTAINER: oc-embedding-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Check out source
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-
-      - name: Make room for the Rust and MKL build
-        # These SDKs are preinstalled on the disposable GitHub-hosted VM.
-        # The image build uses neither Android, .NET, nor Haskell.
+      - name: Generate a local model without downloading weights
+        run: python3 scripts/ci/generate-model.py --output "$RUNNER_TEMP/ci-model"
+      - name: Create an isolated native builder
+        run: docker buildx create --name "$BUILDER" --driver docker-container --use --bootstrap
+      - name: Build the production image
         run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
-          df -h /
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        with:
-          cleanup: true
-
-      - name: Build the native CPU image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: docker/Dockerfile.cpu-${{ matrix.arch }}
-          target: http
-          platforms: linux/${{ matrix.arch }}
-          load: true
-          push: false
-          provenance: false
-          sbom: false
-          tags: ${{ env.IMAGE_TAG }}
-          build-args: |
-            GIT_SHA=${{ github.sha }}
-            DOCKER_LABEL=ci-${{ github.sha }}
-            SCCACHE_GHA_ENABLED=false
-          labels: |
-            org.opencontainers.image.title=oc-embedding
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-
-      - name: Generate a small offline inference fixture
-        run: python3 scripts/ci/generate-model.py --output "$RUNNER_TEMP/$CI_MODEL_BASENAME"
-
-      - name: Check image metadata and run inference smoke tests
-        id: image-test
-        timeout-minutes: 10
-        # This checks the runtime with synthetic weights, not BGE-M3 quality.
+          docker buildx build --builder "$BUILDER" \
+            --platform "linux/${{ matrix.arch }}" \
+            --file docker/Dockerfile.cpu --target production \
+            --build-arg "VCS_REF=$GITHUB_SHA" \
+            --provenance=false --sbom=false --load --tag "$IMAGE" .
+      - name: Check metadata and run real offline HTTP inference
         run: |
           python3 scripts/ci/test-image.py \
-            --image "$IMAGE_TAG" \
-            --model-dir "$RUNNER_TEMP/$CI_MODEL_BASENAME" \
-            --container-name "$CONTAINER_NAME" \
+            --image "$IMAGE" --model-dir "$RUNNER_TEMP/ci-model" \
+            --container-name "$CONTAINER" \
             --expected-architecture "${{ matrix.arch }}" \
-            --expected-revision "$GITHUB_SHA"
-
-      - name: Delete the test container and image
+            --expected-version 0.0.77 --expected-revision "$GITHUB_SHA"
+      - name: Delete test containers, image and builder
         if: always()
         run: |
-          if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
-            docker container rm --force "$CONTAINER_NAME"
+          for oc_name in "$CONTAINER" "$CONTAINER-reference" "$CONTAINER-version"; do
+            if docker container inspect "$oc_name" >/dev/null 2>&1; then
+              docker container rm --force "$oc_name"
+            fi
+          done
+          if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            docker image rm --force "$IMAGE"
           fi
-          if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-            docker image rm --force "$IMAGE_TAG"
+          if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+            docker buildx rm --force "$BUILDER"
           fi
-          remaining_container="$(docker container ls --all --quiet --filter "name=^/${CONTAINER_NAME}$")"
-          remaining_image="$(docker image ls --quiet "$IMAGE_TAG")"
-          test -z "$remaining_container"
-          test -z "$remaining_image"
-          printf '| Platform | Runtime tests | Test container and image |\n| --- | --- | --- |\n| linux/%s | %s | Deleted |\n' \
-            "${{ matrix.arch }}" "${{ steps.image-test.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          for oc_name in "$CONTAINER" "$CONTAINER-reference" "$CONTAINER-version"; do
+            if docker container inspect "$oc_name" >/dev/null 2>&1; then
+              echo "Test container remains: $oc_name" >&2
+              exit 1
+            fi
+          done
+          if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "Test image remains: $IMAGE" >&2
+            exit 1
+          fi
+          if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+            echo "Test builder remains: $BUILDER" >&2
+            exit 1
+          fi

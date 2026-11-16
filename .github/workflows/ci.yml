@@ -1,4 +1,4 @@
-name: CI
+name: Python CI
 
 on:
   push:
@@ -9,96 +9,48 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: python-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-  CARGO_TERM_COLOR: always
-  CARGO_BUILD_JOBS: "2"
-  CARGO_INCREMENTAL: "0"
-  CARGO_PROFILE_DEV_DEBUG: "0"
-  CARGO_PROFILE_TEST_DEBUG: "0"
-
 jobs:
-  formatting:
-    name: File checks
+  python:
+    name: Python ${{ matrix.python }} CPU
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Check out source
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Run the upstream file checks
-        run: |
-          python3 -m venv "$RUNNER_TEMP/pre-commit"
-          "$RUNNER_TEMP/pre-commit/bin/pip" install --disable-pip-version-check pre-commit==4.3.0
-          for hook in check-yaml end-of-file-fixer trailing-whitespace; do
-            "$RUNNER_TEMP/pre-commit/bin/pre-commit" run "$hook" --all-files
-          done
-
-  rust:
-    name: CPU builds, Clippy and upstream tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
     env:
-      # These public-model tests do not need an HF token. Keep snapshot updates
-      # disabled so that a changed result fails CI instead of accepting itself.
-      INSTA_UPDATE: "no"
-      RAYON_NUM_THREADS: "2"
-      HF_HUB_DISABLE_TELEMETRY: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      POETRY_NO_INTERACTION: '1'
+      INFINITY_ANONYMOUS_USAGE_STATS: '0'
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/infinity_emb
     steps:
-      - name: Check out source
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends build-essential cmake libssl-dev pkg-config protobuf-compiler
-
-      - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          toolchain: 1.92.0
-          components: clippy, rustfmt
-          # The project builds for target-cpu=native. Hosted x64 runners can
-          # have different CPUs, so compiled proc macros cannot be reused.
-          cache: false
-          # Match the upstream pre-commit policy: Clippy warnings are reported;
-          # compilation errors and Clippy errors fail the job.
-          rustflags: ""
-
-      - name: Build the default workspace and HTTP server
-        run: cargo build --locked --workspace
-
-      - name: Check the default workspace with Clippy
-        run: cargo clippy --locked --workspace --all-targets
-
-      - name: Run library tests, including the BGE-M3 tokenizer test
-        run: cargo test --locked --workspace --lib -- --test-threads=2
-
-      # The complete upstream model suite includes GPU-only, gated and very
-      # large models. Run existing public MiniLM CPU snapshots on hosted CI.
-      - name: Test CPU mean pooling and batched embeddings
-        run: cargo test --locked -p text-embeddings-backend-candle --test test_bert test_bert -- --exact
-
-      - name: Test CPU CLS pooling and raw token embeddings
-        run: cargo test --locked -p text-embeddings-backend-candle --test test_bert test_bert_pooled_raw -- --exact
-
-      - name: Test the HTTP embeddings API
-        run: cargo test --locked -p text-embeddings-router --test test_http_embed test_mrl_embeddings -- --exact
-
-      - name: Build the CPU gRPC server
-        run: cargo build --locked -p text-embeddings-router --no-default-features --features candle,grpc
-
-      - name: Check the CPU gRPC server with Clippy
-        run: cargo clippy --locked -p text-embeddings-router --lib --bins --no-default-features --features candle,grpc
-
-      # rustfmt resolves modules even behind disabled feature flags. Both builds
-      # above generate the protobuf modules required by a clean checkout.
-      - name: Check Rust formatting after generating protobuf modules
-        run: cargo fmt --all --check
+          python-version: ${{ matrix.python }}
+      - name: Validate the upstream dependency lock
+        run: |
+          python -m pip install poetry==1.8.4
+          poetry check
+          poetry lock --check
+      - name: Install the locked CPU and development dependencies
+        run: EXTRAS=all bash ../../docker/install-dependencies.sh --with lint,test,codespell https://download.pytorch.org/whl/cpu
+      - name: Run the upstream Ruff, mypy and spelling checks
+        run: |
+          .venv/bin/ruff check . ../../scripts/ci
+          .venv/bin/mypy ./infinity_emb
+          .venv/bin/codespell --toml pyproject.toml
+      - name: Generate the local model fixture
+        run: python ../../scripts/ci/generate-model.py --output "$RUNNER_TEMP/ci-model"
+      - name: Run upstream CPU tests and real offline model/API comparisons
+        run: |
+          source .venv/bin/activate
+          python ../../scripts/ci/test-python.py --model-dir "$RUNNER_TEMP/ci-model"

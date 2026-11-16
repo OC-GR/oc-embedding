@@ -1,5 +1,5 @@
 name: "\U0001F680 Feature request"
-description: Submit a proposal/request for a new text-embeddings-inference feature
+description: Submit a proposal/request for a new infinity feature
 labels: [ "feature" ]
 body:
   - type: textarea
@@ -9,7 +9,7 @@ body:
     attributes:
       label: Feature request
       description: |
-        A clear and concise description of the feature proposal. Please provide a link to the paper and code in case they exist.
+        A clear and concise description of the feature proposal. 
 
   - type: textarea
     id: motivation
@@ -19,7 +19,7 @@ body:
       label: Motivation
       description: |
         Please outline the motivation for the proposal. Is your feature request related to a problem? e.g., I'm always frustrated when [...]. If this is related to another GitHub issue, please link here too.
-
+        
 
   - type: textarea
     id: contribution
@@ -28,4 +28,4 @@ body:
     attributes:
       label: Your contribution
       description: |
-        Is there any way that you could help, e.g. by submitting a PR? Make sure to read the CONTRIBUTING.MD [readme](https://github.com/huggingface/text-embeddings-inference/blob/main/CONTRIBUTING.md)
+        Is there any way that you could help, e.g. by submitting a PR? Make sure to read the [contribution guidelines](https://michaelfeil.github.io/infinity)

@@ -1,0 +1,2 @@
+# Preserve the exact bytes of the pinned upstream application snapshot.
+libs/infinity_emb/** -text

@@ -1,139 +1,179 @@
 #!/usr/bin/env python3
-"""Run real offline inference against a temporary CPU image and synthetic fixture."""
+"""Verify a CPU image using a real, local SentenceTransformer forward pass."""
 
 import argparse
+import base64
 import json
 import math
 from pathlib import Path
 import re
+import struct
 import subprocess
+import sys
 import time
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
-
+import urllib.error
+import urllib.request
 
 INPUTS = ["hello world", "reset account password", "track order parcel", "hello world"]
+MODEL_NAME = "ci-model"
+API_KEY = "offline-ci-test-token"
+EPS = 1e-5
 
 
-def require(condition, message):
-    if not condition:
-        raise ValueError(message)
+def docker(*args, check=True):
+    result = subprocess.run(["docker", *args], capture_output=True, text=True)
+    if check and result.returncode:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+    return result
 
 
-def docker(*args, check=True, timeout=60):
-    return subprocess.run(["docker", *args], text=True, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, check=check, timeout=timeout)
+def exists(kind, name):
+    return docker(kind, "inspect", name, check=False).returncode == 0
 
 
-def request(base, path, body=None):
-    data = None if body is None else json.dumps(body).encode()
-    req = Request(base + path, data=data, headers={"Content-Type": "application/json"})
-    with urlopen(req, timeout=15) as response:
-        raw = response.read()
-        return json.loads(raw) if raw else None
-
-
-def check_vectors(vectors, dimensions):
-    require(isinstance(vectors, list) and len(vectors) == len(INPUTS), "Incorrect vector count")
-    for vector in vectors:
-        require(isinstance(vector, list) and len(vector) == dimensions, "Incorrect vector dimension")
-        require(all(type(x) in (int, float) and math.isfinite(x) for x in vector),
-                "Non-finite or nonnumeric vector value")
-        require(abs(math.sqrt(sum(x * x for x in vector)) - 1.0) < 1e-4,
-                "Vector is not normalized")
-    require(max(abs(x - y) for x, y in zip(vectors[0], vectors[3])) < 1e-5,
-            "Repeated input produced inconsistent vectors")
-    require(max(abs(x - y) for x, y in zip(vectors[0], vectors[1])) > 1e-4,
-            "Distinct known-vocabulary inputs produced indistinguishable vectors")
-
-
-def run(args):
-    require(bool(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]+", args.container_name)),
-            "Invalid temporary container name")
-    model = args.model_dir.resolve()
-    require(model.is_dir() and "," not in str(model), "Invalid model directory")
-    config = json.loads((model / "config.json").read_text())
-    dimensions = config["hidden_size"]
-    image = json.loads(docker("image", "inspect", args.image).stdout)[0]
-    require(image["Os"] == "linux" and image["Architecture"] == args.expected_architecture,
-            "Image platform does not match the requested architecture")
-    require(image["Config"]["Labels"].get("org.opencontainers.image.revision") == args.expected_revision,
-            "Image revision label does not match the build commit")
-    require(docker("container", "inspect", args.container_name, check=False).returncode != 0,
-            "Temporary container name is already in use; refusing to replace it")
-
+def request(base, path, payload=None, authenticated=True, expected=200):
+    headers = {"Content-Type": "application/json"}
+    if authenticated:
+        headers["Authorization"] = "Bearer " + API_KEY
+    req = urllib.request.Request(base + path, headers=headers,
+                                 data=None if payload is None else json.dumps(payload).encode())
     try:
-        version = docker("run", "--rm", "--pull=never", "--name", args.container_name,
-                         "--platform", "linux/" + args.expected_architecture,
-                         args.image, "--version").stdout.strip()
-        require("text-embeddings-router" in version, "Image executable version check failed")
-        print(version, flush=True)
-        docker("run", "--detach", "--pull=never", "--name", args.container_name,
-               "--label", "io.oc-embedding.ci=true", "--platform", "linux/" + args.expected_architecture,
-               "--publish", "127.0.0.1::80", "--workdir", "/models",
-               "--mount", f"type=bind,source={model},target=/models/ci-model,readonly",
-               "--env", "HF_HUB_OFFLINE=1", "--env", "TRANSFORMERS_OFFLINE=1",
-               args.image, "--model-id", "ci-model", "--revision", args.expected_revision,
-               "--dtype", "float32", "--pooling", "cls", "--max-batch-tokens", "128",
-               "--max-batch-requests", "1", "--tokenization-workers", "2", "--auto-truncate", "false")
-        address = docker("port", args.container_name, "80/tcp").stdout.strip()
-        require(bool(re.fullmatch(r"127\.0\.0\.1:\d+", address)), "Unexpected container port binding")
-        base = "http://" + address
-        deadline = time.monotonic() + args.startup_timeout
+        with urllib.request.urlopen(req, timeout=20) as response:
+            status, body = response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        status, body = exc.code, exc.read()
+    if status != expected:
+        raise AssertionError(f"{path}: expected HTTP {expected}, got {status}: {body[:1000]!r}")
+    return json.loads(body)
+
+
+def check_vectors(vectors, dimension):
+    assert len(vectors) == len(INPUTS), len(vectors)
+    for vector in vectors:
+        assert len(vector) == dimension, len(vector)
+        assert all(isinstance(x, (int, float)) and math.isfinite(x) for x in vector)
+        assert abs(math.sqrt(sum(x * x for x in vector)) - 1.0) < 1e-4
+    assert max(abs(a - b) for a, b in zip(vectors[0], vectors[-1])) < EPS
+    assert max(abs(a - b) for a, b in zip(vectors[0], vectors[1])) > 1e-4
+
+
+def max_error(actual, expected):
+    assert len(actual) == len(expected)
+    assert all(len(av) == len(ev) for av, ev in zip(actual, expected))
+    return max(abs(a - b) for av, ev in zip(actual, expected) for a, b in zip(av, ev))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--model-dir", type=Path, required=True)
+    parser.add_argument("--container-name", required=True)
+    parser.add_argument("--expected-architecture", choices=["amd64", "arm64"], required=True)
+    parser.add_argument("--expected-version", default="0.0.77")
+    parser.add_argument("--expected-revision")
+    args = parser.parse_args()
+    model_dir = args.model_dir.resolve(strict=True)
+    assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.container_name), "invalid container name"
+    names = [args.container_name, args.container_name + "-reference", args.container_name + "-version"]
+    for name in names:
+        if exists("container", name):
+            raise SystemExit(f"Refusing to replace existing container: {name}")
+    info = json.loads(docker("image", "inspect", args.image).stdout)[0]
+    assert info["Os"] == "linux" and info["Architecture"] == args.expected_architecture
+    if args.expected_revision:
+        assert (info["Config"].get("Labels") or {}).get("org.opencontainers.image.revision") == args.expected_revision
+    dimension = json.loads((model_dir / "config.json").read_text())["hidden_size"]
+    platform = "linux/" + args.expected_architecture
+    offline = ["--env", "HF_HUB_OFFLINE=1", "--env", "TRANSFORMERS_OFFLINE=1",
+               "--env", "HF_HUB_DISABLE_TELEMETRY=1", "--env", "INFINITY_ANONYMOUS_USAGE_STATS=0",
+               "--env", "TOKENIZERS_PARALLELISM=false", "--env", "OMP_NUM_THREADS=2"]
+    mount = ["--mount", f"type=bind,source={model_dir},target=/models/ci-model,readonly"]
+    try:
+        version = docker("run", "--rm", "--pull", "never", "--platform", platform,
+                         "--network", "none", "--name", names[2], "--entrypoint", "python",
+                         args.image, "-c", "import importlib.metadata; print(importlib.metadata.version('infinity-emb'))").stdout.strip()
+        assert version == args.expected_version, version
+        reference_code = (
+            "import json; from sentence_transformers import SentenceTransformer; "
+            "m=SentenceTransformer('/models/ci-model',device='cpu'); "
+            f"v=m.encode({INPUTS!r},normalize_embeddings=True,show_progress_bar=False); "
+            "print('REFERENCE_JSON='+json.dumps(v.tolist()))"
+        )
+        reference_result = docker("run", "--rm", "--pull", "never", "--platform", platform,
+                                  "--network", "none", "--name", names[1], *offline, *mount,
+                                  "--entrypoint", "python", args.image, "-c", reference_code)
+        reference_lines = [line.removeprefix("REFERENCE_JSON=") for line in reference_result.stdout.splitlines()
+                           if line.startswith("REFERENCE_JSON=")]
+        assert len(reference_lines) == 1, reference_result.stdout
+        reference = json.loads(reference_lines[0])
+        check_vectors(reference, dimension)
+
+        docker("run", "--detach", "--pull", "never", "--platform", platform,
+               "--name", names[0], "--label", "io.oc-embedding.ci=true", *offline, *mount,
+               "--publish", "127.0.0.1::7997", args.image, "v2",
+               "--model-id", "/models/ci-model", "--served-model-name", MODEL_NAME,
+               "--engine", "torch", "--device", "cpu", "--dtype", "float32",
+               "--pooling-method", "cls", "--batch-size", "2", "--no-bettertransformer",
+               "--api-key", API_KEY, "--host", "0.0.0.0", "--port", "7997")
+        published = docker("port", names[0], "7997/tcp").stdout.strip()
+        assert re.fullmatch(r"127\.0\.0\.1:\d+", published), published
+        base = "http://" + published
+        deadline = time.monotonic() + 120
         while True:
             try:
-                request(base, "/health")
+                health = request(base, "/health", authenticated=False)
+                assert isinstance(health.get("unix"), (float, int)), health
                 break
-            except (URLError, OSError) as error:
-                state = json.loads(docker("inspect", "--format", "{{json .State}}", args.container_name).stdout)
-                require(state["Running"], f"Container exited during startup: {state}")
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("Image did not become healthy") from error
-                time.sleep(1)
-        info = request(base, "/info")
-        require(info["sha"] == args.expected_revision, "Binary source SHA does not match the build commit")
-        require(info["model_id"] == "ci-model", "Service did not load the local fixture")
-        require(info["model_dtype"] == "float32", "Unexpected model dtype")
-        require(info["model_type"]["embedding"]["pooling"] == "cls", "Unexpected pooling")
-        require(info["max_input_length"] == 32, "Unexpected fixture input limit")
+                    raise TimeoutError("Infinity did not become ready within 120 seconds")
+                assert docker("inspect", "--format", "{{.State.Running}}", names[0]).stdout.strip() == "true", "container exited"
+                time.sleep(0.5)
 
-        native = request(base, "/embed", {"inputs": INPUTS, "normalize": True, "truncate": False})
-        check_vectors(native, dimensions)
-        compatible = request(base, "/v1/embeddings", {"input": INPUTS, "model": "ci-model"})
-        rows = compatible["data"]
-        require(sorted(row["index"] for row in rows) == list(range(len(INPUTS))),
-                "OpenAI-compatible response has incorrect indices")
-        openai = [row["embedding"] for row in sorted(rows, key=lambda row: row["index"])]
-        check_vectors(openai, dimensions)
-        difference = max(abs(x - y) for a, b in zip(native, openai) for x, y in zip(a, b))
-        require(difference < 1e-5, f"API embedding outputs disagree: {difference}")
-        try:
-            request(base, "/embed", {"inputs": ["hello " * 100], "truncate": False})
-        except HTTPError as error:
-            require(error.code == 422, f"Expected 422 for an overlong input; got {error.code}")
-        else:
-            raise ValueError("Overlong input was accepted despite truncate=false")
-        print(json.dumps({"status": "PASS", "image": args.image,
-                          "architecture": args.expected_architecture, "source_sha": info["sha"],
-                          "dimensions": dimensions, "inputs": len(INPUTS),
-                          "api_max_absolute_error": difference,
-                          "scope": "synthetic offline model loading and HTTP inference, not BGE-M3 quality"}, indent=2))
-    except Exception:
-        logs = docker("logs", args.container_name, check=False)
-        print(logs.stdout + logs.stderr, flush=True)
+        request(base, "/models", authenticated=False, expected=401)
+        models = request(base, "/models")["data"]
+        assert len(models) == 1 and models[0]["id"] == MODEL_NAME, models
+        # ModelInfo filters out dtype/revision even though the route builds them.
+        assert models[0]["backend"] == "torch" and "embed" in models[0]["capabilities"], models
+        assert isinstance(models[0]["stats"], dict), models
+        payload = {"model": MODEL_NAME, "input": INPUTS, "encoding_format": "float"}
+        response = request(base, "/embeddings", payload)
+        assert response["model"] == MODEL_NAME and response["object"] == "list", response
+        assert [item["index"] for item in response["data"]] == list(range(len(INPUTS)))
+        vectors = [item["embedding"] for item in response["data"]]
+        check_vectors(vectors, dimension)
+        reference_error = max_error(vectors, reference)
+        assert reference_error < EPS, reference_error
+        single = request(base, "/embeddings", {"model": MODEL_NAME, "input": INPUTS[0]})
+        assert len(single["data"]) == 1
+        assert max_error([single["data"][0]["embedding"]], [vectors[0]]) < EPS
+        encoded = request(base, "/embeddings", {**payload, "encoding_format": "base64"})
+        decoded = [list(struct.unpack("<" + "f" * dimension, base64.b64decode(item["embedding"])))
+                   for item in encoded["data"]]
+        base64_error = max_error(decoded, vectors)
+        assert base64_error < EPS, base64_error
+        request(base, "/embeddings", {"model": MODEL_NAME, "input": []}, expected=422)
+        request(base, "/embeddings", {**payload, "encoding_format": "hex"}, expected=422)
+        # Upstream resolves any requested name when only one engine is loaded.
+        fallback = request(base, "/embeddings", {"model": "not-deployed", "input": INPUTS[0]})
+        assert fallback["model"] == MODEL_NAME
+        assert max_error([fallback["data"][0]["embedding"]], [vectors[0]]) < EPS
+        print(json.dumps({"status": "PASS", "platform": platform, "version": version,
+                          "source_sha": args.expected_revision, "input_count": len(INPUTS),
+                          "dimension": dimension, "reference_max_abs_error": reference_error,
+                          "base64_max_abs_error": base64_error,
+                          "scope": "untrained offline fixture; real Torch forward and API contract"}, indent=2))
+    except BaseException:
+        if exists("container", names[0]):
+            logs = docker("logs", names[0], check=False)
+            print(logs.stdout + logs.stderr, file=sys.stderr)
         raise
     finally:
-        cleanup = docker("rm", "--force", args.container_name, check=False)
-        remaining = docker("container", "inspect", args.container_name, check=False)
-        require(remaining.returncode != 0, "Temporary container was not removed: " + cleanup.stderr)
+        for name in names:
+            if exists("container", name):
+                docker("container", "rm", "--force", name)
+            assert not exists("container", name), f"test container remains: {name}"
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", required=True)
-    parser.add_argument("--model-dir", required=True, type=Path)
-    parser.add_argument("--container-name", required=True)
-    parser.add_argument("--expected-architecture", required=True, choices=("arm64", "amd64"))
-    parser.add_argument("--expected-revision", required=True)
-    parser.add_argument("--startup-timeout", type=int, default=90)
-    run(parser.parse_args())
+    main()

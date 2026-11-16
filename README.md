@@ -1,78 +1,130 @@
 # oc-embedding
 
-基于 Hugging Face Text Embeddings Inference（TEI）1.9.4 的独立文本向量推理项目，支持 ARM64 和 AMD64 CPU Docker 镜像构建，可加载 BGE-M3 等模型。
+基于 **Infinity Python/v2 0.0.77** 的文本向量服务，可通过 HTTP 接口加载 BGE-M3，支持 AMD64 与 ARM64 CPU 镜像构建。
 
-## 源码基线
+## 源码版本
 
-- 上游：<https://github.com/huggingface/text-embeddings-inference>
-- 固定提交：`e80ef225ed0e6cb1717ce632a6a84b6cf211bb67`
-- 上游版本：`1.9.4`
-- 来源及构建配置：[UPSTREAM.json](UPSTREAM.json)
-- 上游文档（已调整介绍文字）：[README.upstream.md](README.upstream.md)
+- 上游：[michaelfeil/infinity](https://github.com/michaelfeil/infinity/tree/0.0.77)
+- 固定 tag：`0.0.77`
+- 固定提交：`4355feffbcbb037cab5c68f510855043d57e6bd7`
+- 官方参考镜像：`michaelf34/infinity:0.0.77-cpu`
+- 应用源码：`libs/infinity_emb/infinity_emb/`
+- 上游依赖及锁文件：`libs/infinity_emb/pyproject.toml`、`poetry.lock`
+- 许可：[MIT](LICENSE)；模型权重和第三方依赖遵循各自许可。
 
-这是此前完成 ARM64、AMD64 镜像构建及官方镜像对比验证的同一份源码快照。初始化时应用源码、Cargo 包名、二进制名、依赖锁文件和根目录的上游 Dockerfile 保持原样；项目名称和本地镜像名称使用 `oc-embedding`。
-
-上游 Git 历史由新的独立仓库替代。原有许可证及版权声明保留，见 [LICENSE](LICENSE)。
+项目仓库和自建镜像使用 `oc-embedding` 名称。Python 包名 `infinity_emb`、CLI `infinity_emb v2` 和上游推理实现保持原样。完整来源、镜像 digest、依赖版本和构建差异记录在 [UPSTREAM.json](UPSTREAM.json)，原介绍保存在 [README.upstream.md](README.upstream.md)。
 
 ## CPU 镜像构建
 
-| 架构 | 已验证构建配方 | 对应上游文件 | 本地镜像名称 |
-| --- | --- | --- | --- |
-| ARM64 | `docker/Dockerfile.cpu-arm64` | `Dockerfile-arm64` | `oc-embedding:1.9.4-arm64` |
-| AMD64 | `docker/Dockerfile.cpu-amd64` | `Dockerfile` | `oc-embedding:1.9.4-amd64` |
+官方 `0.0.77-cpu` 发布配置仅构建 AMD64。本项目新增 ARM64 构建配方，两个平台均使用 `docker/Dockerfile.cpu`。
 
-`docker/` 中的两份构建文件与此前成功构建时使用的配方完全一致。相对上游仅增加 `ENV CARGO_NET_GIT_FETCH_WITH_CLI=true`，解决 Cargo 内置 Git 下载依赖时出现的 SSL 错误。
+先手动准备对应平台的基础镜像：
 
-先由用户准备目标平台的两个基础镜像：`lukemathwalker/cargo-chef:latest-rust-1.92-bookworm`、`debian:bookworm-slim`。构建过程仍会下载系统软件包和 Rust 编译依赖。
+```bash
+docker pull --platform linux/amd64 ubuntu:22.04
+docker pull --platform linux/arm64 ubuntu:22.04
+```
 
-在本仓库根目录执行；ARM64 使用 `ARCH=arm64`，Intel/AMD x86_64 使用 `ARCH=amd64`：
+在仓库根目录执行；Apple Silicon 使用 `arm64`，Intel/AMD x86_64 使用 `amd64`：
 
 ```bash
 ARCH=arm64
-OC_UPSTREAM_SHA=e80ef225ed0e6cb1717ce632a6a84b6cf211bb67
+OC_BUILD_REF=$(git rev-parse HEAD)
 
 docker buildx build \
   --builder "$(docker context show)" \
   --pull=false \
   --platform "linux/$ARCH" \
-  --file "docker/Dockerfile.cpu-$ARCH" \
-  --target http \
-  --build-arg "GIT_SHA=$OC_UPSTREAM_SHA" \
-  --build-arg "DOCKER_LABEL=oc-embedding-1.9.4-$ARCH" \
-  --build-arg SCCACHE_GHA_ENABLED=false \
-  --label org.opencontainers.image.title=oc-embedding \
-  --label "org.opencontainers.image.revision=$OC_UPSTREAM_SHA" \
-  --tag "oc-embedding:1.9.4-$ARCH" \
+  --file docker/Dockerfile.cpu \
+  --target production \
+  --build-arg "VCS_REF=$OC_BUILD_REF" \
+  --tag "oc-embedding:0.0.77-$ARCH" \
   --load \
   .
 ```
 
-使用当前 Docker context 对应的 `docker` driver builder，可复用用户已拉取的基础镜像。Apple Silicon 上构建或运行 AMD64 使用模拟环境，部署到 Intel 服务器后需原生复验。
+`docker` driver 可使用本机已准备的基础镜像。Mac 上运行或构建 AMD64 使用模拟环境；GitHub CI 使用两种架构的原生 runner。
 
-上述 `GIT_SHA` 标记初始化时未修改的上游源码基线。后续修改应用源码后，应改用新仓库的实际提交号标记构建。
+构建会下载系统包和 Python 依赖，不下载 Hugging Face 模型。相对官方 CPU 配方，本项目固定 lock 中的 Torch/Torchvision 版本，并将 OpenVINO `1.22.0` 限定为 AMD64。ARM64 保留标准 ONNX Runtime。Transformers 保留官方配方指定的提交 `7547f55e5d93245c0a013b50df976924f2d9e8b0`，从该提交的源码归档安装并校验 SHA-256。复制应用源码和安装测试依赖时复用已有依赖，避免在同一次构建中重复下载全部运行时包。
 
-## 模型与验证范围
+## 使用本地 BGE-M3
 
-模型文件单独下载并在运行时挂载，镜像不包含模型权重。本仓库复制源码时未复制模型、旧镜像、构建缓存或验证结果。
+模型由使用者提前下载，镜像不包含权重。下述部署显式使用 `torch` 后端，可加载 PyTorch 模型文件，无需 ONNX 导出文件。
 
-此前验证使用 `BAAI/bge-m3`，模型提交为 `5617a9f61b028005a4858fdac845db406aefb181`，CPU float32、CLS pooling、2048-token 输入上限。两个架构与各自官方镜像的稠密向量样本及检索 Top3 比较均通过；AMD64 为 Mac 模拟运行。新仓库初始化后只做了文件一致性检查，尚未以 `oc-embedding` 名称重新构建镜像。
+SentenceTransformers 需要明确的 pooling 配置。只有权重、tokenizer 和 `config.json` 的目录可能回退到 mean pooling，因此首次部署前先准备带 CLS pooling 的模型目录：
 
-## 上游自动化
+```bash
+python3 scripts/prepare-bge-m3.py \
+  --source /absolute/path/to/bge-m3 \
+  --output /absolute/path/to/bge-m3-infinity \
+  --max-seq-length 2048
+```
 
-活动工作流位于 `.github/workflows/`，推送到任意分支、创建或更新 PR、手动运行均会触发：
+脚本检查 XLM-RoBERTa/1024 维配置，补齐 SentenceTransformers 模块及 CLS pooling 配置，并将输入上限明确设为 2048。原模型目录不变；大文件优先使用硬链接，不支持硬链接时才复制。输出目录必须新建或为空。
 
-| 工作流 | 检查内容 |
+启动服务；`MODEL_DIR` 必须是上述输出目录的绝对路径：
+
+```bash
+ARCH=arm64
+MODEL_DIR=/absolute/path/to/bge-m3-infinity
+
+docker run --detach --pull=never \
+  --name oc-embedding \
+  --platform "linux/$ARCH" \
+  --publish 127.0.0.1:18080:7997 \
+  --mount "type=bind,source=$MODEL_DIR,target=/models/bge-m3,readonly" \
+  --env HF_HUB_OFFLINE=1 \
+  --env TRANSFORMERS_OFFLINE=1 \
+  --env INFINITY_ANONYMOUS_USAGE_STATS=0 \
+  --env OMP_NUM_THREADS=2 \
+  --env MKL_NUM_THREADS=2 \
+  "oc-embedding:0.0.77-$ARCH" \
+  v2 --model-id /models/bge-m3 \
+  --served-model-name bge-m3 \
+  --engine torch --device cpu --dtype float32 \
+  --batch-size 2 --no-bettertransformer --no-model-warmup \
+  --host 0.0.0.0 --port 7997
+```
+
+验证服务和向量接口：
+
+```bash
+curl --fail http://127.0.0.1:18080/health
+curl --fail http://127.0.0.1:18080/models
+curl --fail http://127.0.0.1:18080/embeddings \
+  --header 'Content-Type: application/json' \
+  --data '{"model":"bge-m3","input":["如何重置账户密码？"],"encoding_format":"float"}'
+```
+
+响应中每条 BGE-M3 向量有 1024 维，Infinity 执行 L2 归一化。默认向量接口是 `/embeddings`；如果客户端需要 `/v1/embeddings`，启动参数增加 `--url-prefix /v1`，此时模型列表为 `/v1/models`，健康检查仍为 `/health`。
+
+## CI 与镜像检查
+
+`.github/workflows/` 在 push、PR 和手动触发时执行：
+
+| 工作流 | 内容 |
 | --- | --- |
-| `ci.yml` | Rust 1.92.0 格式、上游文件检查、默认 HTTP workspace 编译和 Clippy、library 测试、上游 MiniLM CPU/HTTP 快照测试、CPU gRPC 编译和 Clippy |
-| `secrets.yml` | 恢复上游 TruffleHog 密钥泄漏扫描 |
-| `docker.yml` | 原生 AMD64、ARM64 CPU 镜像构建，架构和源码 SHA 校验，实际启动服务和离线推理检查，最后删除临时容器及镜像 |
+| `ci.yml` | Python 静态检查、适合 CPU 的原有单元/API 测试，以及本地生成模型的真实推理比对 |
+| `docker.yml` | 原生 AMD64、ARM64 镜像构建、OCI 源码标签和版本检查、服务启动及实际向量接口验证 |
+| `secrets.yml` | 密钥泄漏扫描 |
 
-Docker 使用 `ubuntu-24.04` 和 `ubuntu-24.04-arm` 两个原生 GitHub runner，无需仓库密钥或镜像仓库登录。构建使用当前 Git 提交号，不再将新项目的镜像标记为最初的上游 SHA。
+CI 使用生成的微型 BERT/SentenceTransformers 模型，检查模型加载、真实 forward、归一化、不同输入、重复输入、float/base64 编码、鉴权和 HTTP 结果与直接模型调用的一致性。测试不下载额外 Hugging Face 模型；微型模型只验证执行链路，不衡量 BGE-M3 的语义效果。
 
-镜像检查会用 Python 标准库生成一个小型、固定权重的 XLM-RoBERTa 测试模型，检查 `/health`、`/info`、`/embed`、`/v1/embeddings`、向量维度/归一化、重复输入一致、不同输入有区别、两种 API 结果一致及超长输入拒绝。测试模型无需下载；它用于验证镜像的加载和推理链路，不衡量 BGE-M3 语义效果。Rust 上游测试仍会在 runner 下载公开 tokenizer 和 MiniLM 模型，无需私有 HF token。
+Docker 镜像仅临时加载到 runner，不发布 registry，不上传镜像 artifact，不导出镜像缓存。成功或失败后均删除本次测试容器、镜像和 Buildx builder，并检查不存在。
 
-镜像仅临时加载到本次 runner，不推送到 registry，不上传镜像 artifact，也不导出镜像构建缓存。无论检查成功或失败，清理步骤都会删除本次测试容器和镜像，并确认已删除；临时 Buildx builder 由 Action 的清理步骤移除。
+上游原始 workflow 保存在 `.github/upstream-workflows/`，保留其 GPU、多模态、大模型及发布任务供参考；这些任务不直接在本项目运行。
 
-原始工作流及构建矩阵保存在 `.github/upstream-workflows/`。上游全量测试包含大型模型、GPU、Gaudi 和受限模型；当前恢复的是适合普通 CPU runner 的上述检查。HF 内部镜像发布、Gaudi 定时测试和 HF 文档发布仍归档，需对应的基础设施才能启用。
+## 验证范围
 
-检查脚本位于 `scripts/ci/`。已在本机现有的两种架构镜像上通过离线推理检查；GitHub 上的完整 CI 编译、构建和运行结果，以代码推送后 Actions 的实际结果为准。
+官方 AMD64 镜像中的 50 个应用 Python 文件已与固定上游提交逐一做 SHA-256 比对，无差异。官方镜像已离线加载 BGE-M3，并通过 6 条中英文输入的 1024 维、归一化检查。
+
+两种自建镜像均已完成离线 BGE-M3 对比，使用同样的 6 条中英文输入、CLS pooling、CPU float32 和 2048 输入上限：
+
+| 平台 | 本次运行方式 | 与官方输出的最大绝对误差 | 相似度 top-3 排序 |
+| --- | --- | --- | --- |
+| `linux/arm64` | Apple Silicon 原生 | `2.4586915969848633e-7` | 一致 |
+| `linux/amd64` | Apple Silicon 模拟 | `0.0` | 一致 |
+
+两种镜像均通过真实离线模型/API 验证，输出 1024 维归一化向量。此结果验证 BGE-M3 的文本 dense embedding；本次没有做性能比较。
+
+完整结果、镜像 ID 和实际依赖版本记录在 [UPSTREAM.json](UPSTREAM.json)。本地测试容器已删除，保留已验证镜像。模型准备、构建日志和完整验证产物不纳入 Git 仓库；GitHub workflow 的实际运行在提交推送后触发。

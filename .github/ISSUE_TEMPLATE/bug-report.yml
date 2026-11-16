@@ -1,22 +1,19 @@
 name: "\U0001F41B Bug Report"
-description: Submit a bug report to help us improve text-embeddings-inference
+description: Submit a bug report to help us improve infinity
 body:
   - type: textarea
     id: system-info
     attributes:
       label: System Info
-      description: |
-        Please share your system info with us (`text-generation-launcher --env` if installed locally).
-        The full command line used that causes issues:
-        OS version:
-        Rust version (if self-compiling, `cargo version`):
-        Model being used (`curl 127.0.0.1:8080/info | jq`):
-          If local model please explicit the kind of model and/or equivalents.
-        Hardware used (GPUs, how many, on which cloud) (`nvidia-smi`):
-        Deployment specificities (Kubernetes, EKS, AKS, any particular deployments):
+      description: | 
+        Please share your system info with us (`infinity_emb v2 --help` if installed locally).
+        The full command line used that causes issues: 
+        OS version: (linux/win/macos)
+        Model being used (BAAI/..)
+        Hardware used (GPUs/CPU/Accelerator) (`nvidia-smi`): 
         The current version being used:
 
-      placeholder: text-embeddings-inference version, platform, python version, ...
+      placeholder: infinity version, platform, python version, ...
     validations:
       required: true
 
@@ -26,8 +23,9 @@ body:
       label: Information
       description: 'The problem arises when using:'
       options:
-        - label: "Docker"
-        - label: "The CLI directly"
+        - label: "Docker + cli"
+        - label: "pip + cli"
+        - label: "pip + usage of Python interface"
 
   - type: checkboxes
     id: information-tasks
@@ -35,7 +33,7 @@ body:
       label: Tasks
       description: "The thing I am working on is:"
       options:
-        - label: "An officially supported command"
+        - label: "An officially supported CLI command"
         - label: "My own modifications"
 
   - type: textarea
@@ -52,16 +50,13 @@ body:
 
       placeholder: |
         Steps to reproduce the behavior:
-
+          
           1.
           2.
           3.
 
+        Expected behavior:
+          ..
+        
+          
 
-  - type: textarea
-    id: expected-behavior
-    validations:
-      required: true
-    attributes:
-      label: Expected behavior
-      description: "A clear and concise description of what you would expect to happen."

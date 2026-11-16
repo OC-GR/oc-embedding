@@ -1,57 +1,183 @@
 {
   "project": "oc-embedding",
   "upstream": {
-    "repository": "https://github.com/huggingface/text-embeddings-inference",
-    "commit": "e80ef225ed0e6cb1717ce632a6a84b6cf211bb67",
-    "tree": "9971db26d5b6cf8bd646a1e47b1c7973b60a664f",
-    "version": "1.9.4",
-    "license": "Apache-2.0",
-    "snapshot_file_count": 294
+    "repository": "https://github.com/michaelfeil/infinity",
+    "tag": "0.0.77",
+    "version": "0.0.77",
+    "commit": "4355feffbcbb037cab5c68f510855043d57e6bd7",
+    "tree": "f7957e2bb95ed8565dc023b5d8ebcace01147554",
+    "license": "MIT",
+    "application_directory": "libs/infinity_emb",
+    "application_source_modified": false,
+    "pyproject_and_lockfile_modified": false,
+    "application_files_verified": 109
   },
-  "created_at": "2026-10-17T15:29:41.322870+08:00",
-  "source_code_modified": false,
-  "cargo_manifests_and_lockfile_modified": false,
-  "original_dockerfiles_modified": false,
-  "project_changes": [
-    "New independent Git repository named oc-embedding",
-    "Project README replaces upstream front page; upstream README retained as README.upstream.md with introductory model examples edited for this project",
-    "Introductory model examples edited in README.upstream.md and docs/source/en/index.md; modification notices added and copyright and license notices preserved",
-    "Removed four upstream benchmark image LFS pointers, their documentation references and the PNG LFS tracking rule",
-    "Upstream GitHub workflows archived under .github/upstream-workflows",
-    "Two CPU Dockerfile copies preserve the successful Git CLI fetching adjustment",
-    "UPSTREAM.json records the exact source snapshot and provenance",
-    "Portable GitHub Actions restore file checks, Rust CPU builds, Clippy, selected upstream CPU tests and secret scanning",
-    "Native ARM64 and AMD64 Docker CI builds temporary images, validates real offline inference with synthetic weights and always deletes its containers and images"
-  ],
-  "builds": {
-    "arm64": {
-      "platform": "linux/arm64",
-      "upstream_dockerfile": "Dockerfile-arm64",
-      "build_dockerfile": "docker/Dockerfile.cpu-arm64",
-      "target": "http",
-      "image": "oc-embedding:1.9.4-arm64",
-      "dockerfile_sha256": "04b75dd68388acb7e07fe1c51ee301d638ebb2b7486de6b811875e9ee62da13e",
-      "difference_from_upstream": "Only ENV CARGO_NET_GIT_FETCH_WITH_CLI=true after WORKDIR /usr/src; matches the Dockerfile used in the successful build."
+  "reference_image": {
+    "name": "michaelf34/infinity:0.0.77-cpu",
+    "digest": "sha256:94db836145f609c508f3f296f3b9bd0e78ae088025e879664d073dfd9f929e96",
+    "platform": "linux/amd64",
+    "python_source_verification": {
+      "files_compared": 50,
+      "comparison": "SHA-256 of every installed infinity_emb Python file against the pinned upstream snapshot",
+      "differences": 0
     },
-    "amd64": {
-      "platform": "linux/amd64",
-      "upstream_dockerfile": "Dockerfile",
-      "build_dockerfile": "docker/Dockerfile.cpu-amd64",
-      "target": "http",
-      "image": "oc-embedding:1.9.4-amd64",
-      "dockerfile_sha256": "d199fb34c846af35f715b219e8b5ad37378a3badca7dae6acd4dc4c7ea6ca2d3",
-      "difference_from_upstream": "Only ENV CARGO_NET_GIT_FETCH_WITH_CLI=true after WORKDIR /usr/src; matches the Dockerfile used in the successful build."
+    "observed_packages": {
+      "infinity-emb": "0.0.77",
+      "torch": "2.8.0+cpu",
+      "torchvision": "0.23.0+cpu",
+      "sentence-transformers": "3.3.1",
+      "transformers": "4.49.0.dev0",
+      "optimum": "1.24.0",
+      "onnxruntime": "1.19.2",
+      "onnxruntime-openvino": "1.22.0",
+      "numpy": "1.26.4",
+      "fastapi": "0.115.2",
+      "pydantic": "2.9.2",
+      "colpali-engine": "0.3.8"
     }
   },
-  "previous_validation": {
-    "source_commit": "e80ef225ed0e6cb1717ce632a6a84b6cf211bb67",
-    "model": "BAAI/bge-m3",
-    "model_commit": "5617a9f61b028005a4858fdac845db406aefb181",
-    "arm64": "PASS; native on Apple Silicon Mac",
-    "amd64": "PASS; emulated on Apple Silicon Mac",
-    "max_input_tokens": 2048,
-    "scope": "Sample-based dense embedding and retrieval parity against matching official TEI 1.9.4 images, before this repository was initialized.",
-    "models_and_validation_artifacts_copied": false,
-    "new_repository_image_rebuilt": false
+  "project_changes": [
+    "Independent repository named oc-embedding; original application module and CLI names retained",
+    "Project README replaces the upstream front page, preserved as README.upstream.md",
+    "Original upstream workflows archived under .github/upstream-workflows",
+    "Native AMD64 and ARM64 CPU build recipe at docker/Dockerfile.cpu",
+    "OpenVINO 1.22.0 installed only on AMD64; ARM64 uses the standard CPU ONNX Runtime provider",
+    "CPU Torch and Torchvision versions pinned from the upstream dependency lock instead of installing unversioned packages",
+    "Transformers uses the upstream Dockerfile dependency commit 7547f55e5d93245c0a013b50df976924f2d9e8b0, installed from its SHA-256 verified source archive",
+    "Install locked runtime dependencies once; install the local package without dependencies and add test-only packages in an isolated test stage",
+    "Offline Python and container checks use a locally generated real inference model; CI deletes temporary containers and images",
+    "BGE-M3 preparation script adds explicit SentenceTransformers CLS pooling metadata without changing the original model directory",
+    "Preserve the exact upstream application file bytes across Git commits and checkouts with .gitattributes"
+  ],
+  "model": {
+    "name": "BAAI/bge-m3",
+    "weights_commit": "5617a9f61b028005a4858fdac845db406aefb181",
+    "weights_in_repository_or_image": false,
+    "validation_engine": "torch",
+    "validation_dtype": "float32",
+    "validation_pooling": "cls",
+    "validation_max_seq_length": 2048,
+    "official_reference_vectors": "PASS: 6 inputs, 1024 dimensions, CPU float32 with explicit CLS pooling",
+    "rebuilt_image_comparison": {
+      "status": "PASS",
+      "inputs": 6,
+      "dimensions": 1024,
+      "scope": "Sampled dense embeddings with the same prepared model and launch parameters",
+      "results": {
+        "linux/arm64": {
+          "status": "PASS",
+          "max_absolute_error": 2.4586915969848633e-07,
+          "minimum_cosine_similarity": 0.9999999999973805,
+          "retrieval_top3_matches": true
+        },
+        "linux/amd64": {
+          "status": "PASS",
+          "max_absolute_error": 0.0,
+          "minimum_cosine_similarity": 1.0,
+          "retrieval_top3_matches": true
+        }
+      }
+    }
+  },
+  "build_dependencies": {
+    "transformers": {
+      "commit": "7547f55e5d93245c0a013b50df976924f2d9e8b0",
+      "version": "4.49.0.dev0",
+      "archive_url": "https://codeload.github.com/huggingface/transformers/tar.gz/7547f55e5d93245c0a013b50df976924f2d9e8b0",
+      "archive_sha256": "77be48354e654bcc57b24b55f82a8a94ee3ba071e97df518f5a81bf5412db5b5"
+    },
+    "known_upstream_constraint": {
+      "package": "colpali-engine==0.3.8",
+      "requires": "transformers>=4.47.0,<4.48.0",
+      "reference_image_installs": "transformers==4.49.0.dev0",
+      "same_combination_retained": true,
+      "validation_scope": "BGE-M3 dense text embeddings on Torch CPU; visual models are outside this validation"
+    }
+  },
+  "local_validation": {
+    "date": "2026-11-16",
+    "host": "Apple Silicon with Docker Desktop",
+    "execution": {
+      "linux/arm64": "native",
+      "linux/amd64": "emulated"
+    },
+    "images": {
+      "linux/arm64": {
+        "name": "oc-embedding:0.0.77-arm64",
+        "image_id": "sha256:a959446677fbd436b751e253d705112d6b99d4dae7682f94f4c0dccefd80218d",
+        "packages": {
+          "infinity-emb": "0.0.77",
+          "torch": "2.8.0+cpu",
+          "torchvision": "0.23.0",
+          "sentence-transformers": "3.3.1",
+          "transformers": "4.49.0.dev0",
+          "optimum": "1.24.0",
+          "onnxruntime": "1.19.2",
+          "onnxruntime-openvino": null,
+          "numpy": "1.26.4",
+          "fastapi": "0.115.2",
+          "pydantic": "2.9.2"
+        }
+      },
+      "linux/amd64": {
+        "name": "oc-embedding:0.0.77-amd64",
+        "image_id": "sha256:b2980842c9c9f92907e27d41a2e13a1ea83558e33aa7531e96f4bec6d0354679",
+        "packages": {
+          "infinity-emb": "0.0.77",
+          "torch": "2.8.0+cpu",
+          "torchvision": "0.23.0+cpu",
+          "sentence-transformers": "3.3.1",
+          "transformers": "4.49.0.dev0",
+          "optimum": "1.24.0",
+          "onnxruntime": "1.19.2",
+          "onnxruntime-openvino": "1.22.0",
+          "numpy": "1.26.4",
+          "fastapi": "0.115.2",
+          "pydantic": "2.9.2"
+        }
+      }
+    },
+    "upstream_tests": {
+      "passed": 46,
+      "deselected": 7
+    },
+    "ruff": "PASS",
+    "mypy": "PASS: 50 application source files",
+    "codespell": "PASS",
+    "workflow_actionlint": "PASS: 3 active workflows, 0 errors",
+    "image_build_tests": {
+      "per_platform": {
+        "passed": 6,
+        "skipped": 1
+      }
+    },
+    "offline_fixture_api": {
+      "linux/arm64": {
+        "status": "PASS",
+        "platform": "linux/arm64",
+        "version": "0.0.77",
+        "source_sha": "4355feffbcbb037cab5c68f510855043d57e6bd7",
+        "input_count": 4,
+        "dimension": 16,
+        "reference_max_abs_error": 0.0,
+        "base64_max_abs_error": 0.0,
+        "scope": "untrained offline fixture; real Torch forward and API contract"
+      },
+      "linux/amd64": {
+        "status": "PASS",
+        "platform": "linux/amd64",
+        "version": "0.0.77",
+        "source_sha": "4355feffbcbb037cab5c68f510855043d57e6bd7",
+        "input_count": 4,
+        "dimension": 16,
+        "reference_max_abs_error": 0.0,
+        "base64_max_abs_error": 0.0,
+        "scope": "untrained offline fixture; real Torch forward and API contract"
+      }
+    },
+    "python312": "Dependency Python ranges and Linux wheel availability checked; runtime matrix awaits GitHub CI",
+    "github_pipeline_executed_for_this_migration": false,
+    "test_containers_removed": true,
+    "build_revision_label": "Upstream snapshot commit used for this uncommitted local validation; CI uses github.sha"
   }
 }

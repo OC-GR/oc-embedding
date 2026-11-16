@@ -1,2 +1,13 @@
+.git
 .idea
-target
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+artifacts
+models
+data
+dist
+build

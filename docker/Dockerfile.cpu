@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023 Michael Feil
+# Based on Infinity 0.0.77, commit 4355feffbcbb037cab5c68f510855043d57e6bd7,
+# libs/infinity_emb/Dockerfile.cpu_auto. Build with the repository root as context.
+# oc-embedding changes: native ARM64 support, lock-pinned CPU Torch packages,
+# project labels, offline build checks, and pinned AMD64 OpenVINO dependencies.
+# OpenVINO 1.22.0 was read from the actual 0.0.77-cpu reference image, digest
+# sha256:94db836145f609c508f3f296f3b9bd0e78ae088025e879664d073dfd9f929e96.
+
+FROM ubuntu:22.04 AS base
+
+ARG TARGETARCH
+ARG VCS_REF=unknown
+
+LABEL org.opencontainers.image.title="oc-embedding" \
+      org.opencontainers.image.source="https://github.com/OC-GR/oc-embedding" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.version="0.0.77" \
+      io.oc-embedding.upstream.revision="4355feffbcbb037cab5c68f510855043d57e6bd7"
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=off \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100 \
+    POETRY_VIRTUALENVS_CREATE=true \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_NO_INTERACTION=1 \
+    EXTRAS=all \
+    PYTHON=python3 \
+    INFINITY_ENGINE=optimum
+
+RUN case "$TARGETARCH" in amd64|arm64) ;; *) echo "Unsupported CPU architecture: $TARGETARCH" >&2; exit 1 ;; esac && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y \
+        build-essential python3-dev libsndfile1 python3-venv python3-pip python3 curl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+FROM base AS builder
+
+ARG POETRY_VERSION=1.8.4
+ARG POETRY_HOME=/opt/poetry
+ARG OPENVINO_VERSION=1.22.0
+ARG TRANSFORMERS_REF=7547f55e5d93245c0a013b50df976924f2d9e8b0
+
+RUN curl -fsSL https://install.python-poetry.org | \
+    POETRY_HOME="$POETRY_HOME" POETRY_VERSION="$POETRY_VERSION" python3 -
+ENV PATH=/opt/poetry/bin:$PATH
+
+COPY libs/infinity_emb/poetry.lock libs/infinity_emb/poetry.toml libs/infinity_emb/pyproject.toml libs/infinity_emb/README.md /app/
+COPY docker/install-dependencies.sh /usr/local/bin/oc-install-dependencies
+
+RUN bash /usr/local/bin/oc-install-dependencies --no-root --without lint,test \
+        https://download.pytorch.org/whl/cpu && \
+    if [ "$TARGETARCH" = amd64 ]; then \
+        poetry run python -m pip install --no-cache-dir \
+            "onnxruntime-openvino==$OPENVINO_VERSION"; \
+    fi
+
+COPY libs/infinity_emb/infinity_emb infinity_emb
+# Dependencies are already installed from the lockfile. Installing the local
+# package separately keeps source changes from downloading every wheel again.
+RUN poetry run python -m pip install --no-cache-dir --no-deps --editable .
+
+# Preserve the exact Transformers dependency commit selected by the upstream
+# CPU Dockerfile. It may differ from the base poetry.lock distribution version.
+ARG TRANSFORMERS_ARCHIVE_SHA256=77be48354e654bcc57b24b55f82a8a94ee3ba071e97df518f5a81bf5412db5b5
+RUN curl --fail --silent --show-error --location --retry 3 \
+        --connect-timeout 20 --max-time 300 \
+        "https://codeload.github.com/huggingface/transformers/tar.gz/$TRANSFORMERS_REF" \
+        --output /tmp/transformers.tar.gz && \
+    printf '%s  %s\n' "$TRANSFORMERS_ARCHIVE_SHA256" /tmp/transformers.tar.gz | sha256sum --check - && \
+    poetry run python -m pip install /tmp/transformers.tar.gz && \
+    rm -rf /var/lib/apt/lists/* /root/.cache /tmp/*
+
+FROM builder AS testing
+
+# Add the locked test dependencies to this disposable stage. Keep the installed
+# CPU Torch wheels instead of recreating and downloading the runtime environment.
+RUN poetry export --without-hashes --format=requirements.txt --extras all \
+        --with lint,test > requirements.test-exported.txt && \
+    sed -E '/^(torch|torchvision|nvidia([-_][A-Za-z0-9_.-]+)?|triton)==/d' \
+        requirements.test-exported.txt > requirements.test.txt && \
+    poetry run python -m pip install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        --constraint requirements.cpu-torch.txt --requirement requirements.test.txt
+RUN poetry run ruff check .
+RUN poetry run mypy .
+COPY libs/infinity_emb/tests tests
+# Keep image builds independent of model downloads. Real model inference is
+# exercised separately with locally generated weights in the image CI.
+RUN HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 INFINITY_ANONYMOUS_USAGE_STATS=0 \
+    poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x
+RUN echo "all tests passed" > test_results.txt
+
+FROM base AS tested-builder
+COPY --from=builder /app /app
+COPY --from=testing /app/test_results.txt /app/test_results.txt
+ENV HF_HOME=/app/.cache/huggingface
+ENV PATH=/app/.venv/bin:$PATH
+
+FROM tested-builder AS production-with-download
+ARG MODEL_NAME
+ARG ENGINE
+RUN test -n "$MODEL_NAME" && test -n "$ENGINE"
+ENV INFINITY_MODEL_ID=$MODEL_NAME
+ENV INFINITY_ENGINE=$ENGINE
+RUN infinity_emb v2 --preload-only --no-model-warmup || [ $? -eq 3 ]
+ENTRYPOINT ["infinity_emb"]
+
+FROM tested-builder AS production
+ENTRYPOINT ["infinity_emb"]
